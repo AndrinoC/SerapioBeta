@@ -2544,10 +2544,10 @@
         {
           name: "Domínio do Seraph",
           description:
-            "Cria uma aura que causa dano e lentidão a inimigos próximos a cada 2s.",
+            "Cria uma aura contínua que causa dano e lentidão a inimigos e projéteis próximos.",
           rarity: "unique",
           icon: "dominio_do_seraph.png",
-          apply: (p) => (p.stats.hasDominioDoSeraph = true),
+          apply: (p) => { p.stats.hasDominioDoSeraph = true; p.stats.dominioDoSeraphTimer = 0; },
           isUnique: true,
           isBossReward: true,
         },
@@ -2951,30 +2951,57 @@
               }
             }
           }
+          
+          enemies.forEach((enemy) => (enemy.slowFactor = 1));
+
           if (this.stats.hasDominioDoSeraph) {
+            const auraRadius = 120;
+            const damageTickRate = 250; 
+            const damagePerSecond = this.stats.projectileDamage * 0.3;
+            const damagePerTick = damagePerSecond / (1000 / damageTickRate);
+
             this.stats.dominioDoSeraphTimer -= e;
-            if (this.stats.dominioDoSeraphTimer <= 0) {
-              this.stats.dominioDoSeraphTimer = 2000;
-              const auraRadius = 120;
-              particles.push(
-                new AuraPulseEffect(
-                  this.x + this.width / 2,
-                  this.y + this.height / 2,
-                  auraRadius
-                )
+            const dealDamage = this.stats.dominioDoSeraphTimer <= 0;
+            if (dealDamage) {
+              this.stats.dominioDoSeraphTimer = damageTickRate;
+            }
+
+            enemies.forEach((enemy) => {
+              const dist = Math.hypot(
+                this.x + this.width / 2 - (enemy.x + enemy.width / 2),
+                this.y + this.height / 2 - (enemy.y + enemy.height / 2)
               );
-              enemies.forEach((enemy) => {
+              if (dist < auraRadius) {
+                if (dealDamage) {
+                  enemy.takeDamage(damagePerTick, false);
+                }
+                enemy.slowFactor = 0.6;
+              }
+            });
+
+            eProjs.forEach((proj) => {
+              if (proj.active) {
                 const dist = Math.hypot(
-                  this.x + this.width / 2 - (enemy.x + enemy.width / 2),
-                  this.y + this.height / 2 - (enemy.y + enemy.height / 2)
+                  (this.x + this.width / 2) - proj.x,
+                  (this.y + this.height / 2) - proj.y
                 );
                 if (dist < auraRadius) {
-                  enemy.takeDamage(this.stats.projectileDamage * 0.3, false);
-                  enemy.slowFactor = Math.max(0.3, enemy.slowFactor * 0.9);
+                  const slowMultiplier = 0.95; 
+                  proj.vx *= slowMultiplier;
+                  proj.vy *= slowMultiplier;
+
+                  const currentSpeed = Math.hypot(proj.vx, proj.vy);
+                  const minSpeed = 1.0;
+                  if (currentSpeed < minSpeed && currentSpeed > 0.01) {
+                    const factor = minSpeed / currentSpeed;
+                    proj.vx *= factor;
+                    proj.vy *= factor;
+                  }
                 }
-              });
-            }
+              }
+            });
           }
+
           if (this.stats.impactoTitanicoCooldown > 0) {
             this.stats.impactoTitanicoCooldown -= e;
           }
@@ -5220,12 +5247,13 @@
           this.currentRadius = this.maxRadius * (1 - this.life / 20);
         }
         draw() {
+          if (this.life <= 0) return;
           ctx.save();
-          ctx.globalAlpha = this.life / 20;
+          ctx.globalAlpha = Math.max(0, this.life / 20);
           ctx.strokeStyle = "rgba(100, 200, 255, 0.8)";
           ctx.lineWidth = 3;
           ctx.beginPath();
-          ctx.arc(this.x, this.y, this.currentRadius, 0, 2 * Math.PI);
+          ctx.arc(this.x, this.y, Math.max(0, this.currentRadius), 0, 2 * Math.PI);
           ctx.stroke();
           ctx.restore();
         }
@@ -5776,12 +5804,13 @@
           this.currentRadius = this.maxRadius * (1 - this.life / 20);
         }
         draw() {
+          if (this.life <= 0) return;
           ctx.save();
-          ctx.globalAlpha = this.life / 20;
+          ctx.globalAlpha = Math.max(0, this.life / 20);
           ctx.strokeStyle = "rgba(255, 100, 0, 0.8)";
           ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.arc(this.x, this.y, this.currentRadius, 0, 2 * Math.PI);
+          ctx.arc(this.x, this.y, Math.max(0, this.currentRadius), 0, 2 * Math.PI);
           ctx.stroke();
           ctx.restore();
         }
@@ -5989,50 +6018,12 @@
           if (player.stats.cold)
             e.slowFactor = Math.max(0.2, e.slowFactor * 0.99);
           if (player.stats.wound) e.bleedDamage += 0.1 * this.damage;
-          if (
-            player.stats.hasPactoDoBruxo &&
-            Math.random() < 0.15 &&
-            enemies.length > 1
-          ) {
-            let closestEnemy = null;
-            let minDistance = Infinity;
-            enemies.forEach((otherEnemy) => {
-              if (otherEnemy !== e && !this.hitEnemies.has(otherEnemy)) {
-                const dist = Math.hypot(
-                  this.x - otherEnemy.x,
-                  this.y - otherEnemy.y
-                );
-                if (dist < minDistance) {
-                  minDistance = dist;
-                  closestEnemy = otherEnemy;
-                }
-              }
-            });
-            if (closestEnemy) {
-              const angle = Math.atan2(
-                closestEnemy.y + closestEnemy.height / 2 - this.y,
-                closestEnemy.x + closestEnemy.width / 2 - this.x
-              );
-              const p = new PlayerProjectile(
-                this.x,
-                this.y,
-                angle,
-                this.damage * 0.75
-              );
-              p.radius *= 0.8;
-              p.pierceLeft = 1;
-              pProjs.push(p);
-            }
-          }
+
           if (this.jumpsLeft > 0) {
             this.jumpsLeft--;
             let closestEnemy = null;
             let minDistance = Infinity;
-            const allTargets = [
-              ...enemies,
-              ...tempWisps.filter((w) => w.hp > 0),
-            ];
-            for (const otherEnemy of allTargets) {
+            for (const otherEnemy of enemies) {
               if (
                 otherEnemy !== e &&
                 otherEnemy.hp > 0 &&
@@ -6207,7 +6198,6 @@
             this.shootCooldown > 0 && (this.shootCooldown -= e);
           this.laserDamageTick > 0 && (this.laserDamageTick -= e);
 
-          const allTargets = [...enemies, ...tempWisps.filter((w) => w.hp > 0)];
           if (
             this.owner.stats.laserBeam &&
             this.laserDamageTick <= 0 &&
@@ -6217,11 +6207,7 @@
 
             let closestEnemy = null;
             let minDistance = Infinity;
-            const allTargets = [
-              ...enemies,
-              ...tempWisps.filter((w) => w.hp > 0),
-            ];
-            allTargets.forEach((enemy) => {
+            enemies.forEach((enemy) => {
               if (enemy.hp > 0) {
                 const distance = Math.hypot(
                   this.x - enemy.x - enemy.width / 2,
@@ -6256,12 +6242,9 @@
             enemies.length > 0 &&
             this.shootCooldown <= 0
           ) {
-            const allTargets = [
-              ...enemies,
-              ...tempWisps.filter((w) => w.hp > 0),
-            ];
-            if (allTargets.length === 0) return;
-            let i = allTargets.reduce((e, t) =>
+            const livingEnemies = enemies.filter((en) => en.hp > 0);
+            if (livingEnemies.length === 0) return;
+            let i = livingEnemies.reduce((e, t) =>
               Math.hypot(t.x - this.x, t.y - this.y) <
               Math.hypot(e.x - this.x, e.y - this.y)
                 ? t
@@ -7022,6 +7005,7 @@
           (orbs = []),
           (dNums = []),
           (wisp = null),
+          (tempWisps = []),
           (platforms = []),
           (availableUpgrades = [...allUpgrades]),
           (runSpecialEnemiesSeen = new Set()),
@@ -7307,6 +7291,22 @@
               e.preventDefault(), player.jump();
             } else if ("r" === e.key || "R" === e.key) {
               (autoFire = !autoFire), updateAutofireIndicator();
+            } else if (e.key === '1') {
+                const nextBossWave = (Math.floor(currentWave / 5) + 1) * 5;
+                currentWave = nextBossWave - 1;
+                enemies.forEach(enemy => enemy.hp = 0);
+                waveState = "intermission";
+                intermissionTimer = 10;
+            } else if (e.key === '2') {
+                const bossUpgrades = allUpgrades.filter(u => u.isBossReward);
+                bossUpgrades.forEach(upgrade => {
+                    applySpecificUpgrade(upgrade.name);
+                });
+            } else if (e.key === '3') {
+                currentWave = 19;
+                enemies.forEach(enemy => enemy.hp = 0);
+                waveState = "intermission";
+                intermissionTimer = 10;
             }
           }
         }),
